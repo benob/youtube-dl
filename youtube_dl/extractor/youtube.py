@@ -10,6 +10,7 @@ import random
 import re
 import time
 import traceback
+import math
 
 from .common import InfoExtractor, SearchInfoExtractor
 from ..jsinterp import JSInterpreter
@@ -1502,8 +1503,65 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             if dash_mpd and dash_mpd[0] not in dash_mpds:
                 dash_mpds.append(dash_mpd[0])
 
+        def get_storyboards(video_info):
+            storyboards = []
+            spec = video_info.get('storyboard_spec', [])
+
+            for s in spec:
+                s_parts = s.split('|')
+                base_url = s_parts[0]
+                i = 0
+                for params in s_parts[1:]:
+                    storyboard_attrib = params.split('#')
+                    if len(storyboard_attrib) != 8:
+                        self._downloader.report_warning('Unable to extract storyboard')
+                        continue
+
+                    frame_width = int_or_none(storyboard_attrib[0])
+                    frame_height = int_or_none(storyboard_attrib[1])
+                    total_frames = int_or_none(storyboard_attrib[2])
+                    cols = int_or_none(storyboard_attrib[3])
+                    rows = int_or_none(storyboard_attrib[4])
+                    filename = storyboard_attrib[6]
+                    sigh = storyboard_attrib[7]
+
+                    if frame_width and frame_height and cols and rows and total_frames:
+                        frames = cols * rows
+                        width, height = frame_width * cols, frame_height * rows
+                        n_images = int(math.ceil(total_frames / float(cols * rows)))
+                    else:
+                        self._downloader.report_warning('Unable to extract storyboard')
+                        continue
+
+                    storyboards_url = base_url.replace('$L', compat_str(i)) + '?'
+                    for j in range(n_images):
+                        url = storyboards_url.replace('$N', filename).replace('$M', compat_str(j)) + 'sigh=' + sigh
+                        if j == n_images-1:
+                            remaining_frames = total_frames % (cols * rows)
+                            if remaining_frames != 0:
+                                frames = remaining_frames
+                                rows = int(math.ceil(float(remaining_frames) / rows))
+                                height = rows * frame_height
+                                if rows == 1:
+                                    cols = remaining_frames
+                                    width = cols * frame_width
+
+                        storyboards.append({
+                            'id': 'L' + compat_str(i) + '-M' + compat_str(j),
+                            'width': width,
+                            'height': height,
+                            'cols': cols,
+                            'rows': rows,
+                            'frames': frames,
+                            'url': url
+                        })
+                    i += 1
+
+            return storyboards
+
         is_live = None
         view_count = None
+        storyboards = None
 
         def extract_view_count(v_info):
             return int_or_none(try_get(v_info, lambda x: x['view_count'][0]))
@@ -1529,6 +1587,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                 errnote='unable to download video info webpage')
             video_info = compat_parse_qs(video_info_webpage)
             add_dash_mpd(video_info)
+            storyboards = get_storyboards(video_info)
         else:
             age_gate = False
             video_info = None
@@ -1579,6 +1638,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                         continue
                     get_video_info = compat_parse_qs(video_info_webpage)
                     add_dash_mpd(get_video_info)
+                    storyboards = get_storyboards(get_video_info)
                     if view_count is None:
                         view_count = extract_view_count(get_video_info)
                     if not video_info:
@@ -2027,6 +2087,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             'title': video_title,
             'alt_title': video_alt_title,
             'thumbnail': video_thumbnail,
+            'storyboards': storyboards,
             'description': video_description,
             'categories': video_categories,
             'tags': video_tags,

@@ -178,6 +178,8 @@ class YoutubeDL(object):
     writeannotations:  Write the video annotations to a .annotations.xml file
     writethumbnail:    Write the thumbnail image to a file
     write_all_thumbnails:  Write all thumbnail formats to files
+    writestoryboard:   Write storyboard (grid of video frames) to a file
+    write_all_storyboards: Write all storyboard images to files
     writesubtitles:    Write the video subtitles to a file
     writeautomaticsub: Write the automatically generated subtitles to a file
     allsubtitles:      Downloads all the subtitles of the video
@@ -274,6 +276,7 @@ class YoutubeDL(object):
                        [sleep_interval; max_sleep_interval].
     listformats:       Print an overview of available video formats and exit.
     list_thumbnails:   Print a table of all thumbnails and exit.
+    list_storyboards:  Print a table of all storyboards and exit.
     match_filter:      A function that gets called with the info_dict of
                        every video.
                        If it returns a message, the video is ignored.
@@ -1448,6 +1451,10 @@ class YoutubeDL(object):
             self.list_thumbnails(info_dict)
             return
 
+        if self.params.get('list_storyboards'):
+            self.list_thumbnails(info_dict, item_name='storyboards')
+            return
+
         thumbnail = info_dict.get('thumbnail')
         if thumbnail:
             info_dict['thumbnail'] = sanitize_url(thumbnail)
@@ -1819,7 +1826,8 @@ class YoutubeDL(object):
                     self.report_error('Cannot write metadata to JSON file ' + infofn)
                     return
 
-        self._write_thumbnails(info_dict, filename)
+        self._write_thumbnails(info_dict, filename, item_name='thumbnails')
+        self._write_thumbnails(info_dict, filename, item_name='storyboards')
 
         if not self.params.get('skip_download', False):
             try:
@@ -2166,17 +2174,27 @@ class YoutubeDL(object):
             '[info] Available formats for %s:\n%s' %
             (info_dict['id'], render_table(header_line, table)))
 
-    def list_thumbnails(self, info_dict):
-        thumbnails = info_dict.get('thumbnails')
+    def list_thumbnails(self, info_dict, item_name='thumbnails'):
+        thumbnails = info_dict.get(item_name)
         if not thumbnails:
-            self.to_screen('[info] No thumbnails present for %s' % info_dict['id'])
+            self.to_screen('[info] No %s present for %s' % (item_name, info_dict['id']))
             return
 
         self.to_screen(
-            '[info] Thumbnails for %s:' % info_dict['id'])
-        self.to_screen(render_table(
-            ['ID', 'width', 'height', 'URL'],
-            [[t['id'], t.get('width', 'unknown'), t.get('height', 'unknown'), t['url']] for t in thumbnails]))
+            '[info] %s for %s:' % (item_name.title(), info_dict['id']))
+
+        columns = ['ID', 'width', 'height']
+        if item_name == 'storyboards':
+            columns += ['cols', 'rows', 'frames']
+        columns += ['URL']
+
+        table = []
+        for t in thumbnails:
+            table.append([])
+            for column in columns:
+                table[-1].append(t.get(column.lower(), 'unknown'))
+
+        self.to_screen(render_table(columns, table))
 
     def list_subtitles(self, video_id, subtitles, name='subtitles'):
         if not subtitles:
@@ -2332,38 +2350,51 @@ class YoutubeDL(object):
             encoding = preferredencoding()
         return encoding
 
-    def _write_thumbnails(self, info_dict, filename):
-        if self.params.get('writethumbnail', False):
-            thumbnails = info_dict.get('thumbnails')
-            if thumbnails:
-                thumbnails = [thumbnails[-1]]
-        elif self.params.get('write_all_thumbnails', False):
-            thumbnails = info_dict.get('thumbnails')
-        else:
-            return
-
+    def _write_thumbnails(self, info_dict, filename, item_name='thumbnails'):
+        thumbnails = info_dict.get(item_name)
         if not thumbnails:
             # No thumbnails present, so return immediately
             return
 
+        if item_name == 'thumbnails':
+            if self.params.get('writethumbnail', False):
+                thumbnails = [thumbnails[-1]]
+            elif not self.params.get('write_all_thumbnails', False):
+                return
+        elif item_name == 'storyboards':
+            if self.params.get('writestoryboard', False):
+                thumbnails = [thumbnails[0]]
+            elif not self.params.get('write_all_storyboards', False):
+                return
+        else:
+            return
+
+        item_name_singular = item_name[:-1]
+
         for t in thumbnails:
             thumb_ext = determine_ext(t['url'], 'jpg')
-            suffix = '_%s' % t['id'] if len(thumbnails) > 1 else ''
+            if item_name == 'thumbnails':
+                suffix = '_%s' % t['id'] if len(thumbnails) > 1 else ''
+            else:
+                suffix = '_%s_%s' % (item_name_singular, t['id'])
             thumb_display_id = '%s ' % t['id'] if len(thumbnails) > 1 else ''
             t['filename'] = thumb_filename = os.path.splitext(filename)[0] + suffix + '.' + thumb_ext
 
             if self.params.get('nooverwrites', False) and os.path.exists(encodeFilename(thumb_filename)):
-                self.to_screen('[%s] %s: Thumbnail %sis already present' %
-                               (info_dict['extractor'], info_dict['id'], thumb_display_id))
+                self.to_screen('[%s] %s: %s %sis already present' %
+                               (info_dict['extractor'], info_dict['id'],
+                                item_name_singular.title(), thumb_display_id))
             else:
-                self.to_screen('[%s] %s: Downloading thumbnail %s...' %
-                               (info_dict['extractor'], info_dict['id'], thumb_display_id))
+                self.to_screen('[%s] %s: Downloading %s %s...' %
+                               (info_dict['extractor'], info_dict['id'],
+                                item_name_singular, thumb_display_id))
                 try:
                     uf = self.urlopen(t['url'])
                     with open(encodeFilename(thumb_filename), 'wb') as thumbf:
                         shutil.copyfileobj(uf, thumbf)
-                    self.to_screen('[%s] %s: Writing thumbnail %sto: %s' %
-                                   (info_dict['extractor'], info_dict['id'], thumb_display_id, thumb_filename))
+                    self.to_screen('[%s] %s: Writing %s %sto: %s' %
+                                   (info_dict['extractor'], info_dict['id'],
+                                    item_name_singular, thumb_display_id, thumb_filename))
                 except (compat_urllib_error.URLError, compat_http_client.HTTPException, socket.error) as err:
-                    self.report_warning('Unable to download thumbnail "%s": %s' %
-                                        (t['url'], error_to_compat_str(err)))
+                    self.report_warning('Unable to download %s "%s": %s' %
+                                        (t['url'], item_name_singular, error_to_compat_str(err)))
